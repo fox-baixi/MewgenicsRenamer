@@ -1,0 +1,74 @@
+name: Build Executable
+
+on:
+  push:
+    branches: [ "main", "master" ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11' 
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+        if (Test-Path requirements.txt) { pip install -r requirements.txt }
+
+    - name: Build EXE with PyInstaller
+      run: |
+        pyinstaller --noconsole --onefile MewgenicsRenamer.py
+
+    - name: Rename Executable for Release (If Tagged)
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: |
+        $TAG_NAME = "${{ github.ref_name }}"
+        Rename-Item -Path "dist\MewgenicsRenamer.exe" -NewName "MewgenicsRenamer-${TAG_NAME}.exe"
+
+    - name: Upload EXE Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: MewgenicsRenamer-Windows-EXE
+        path: dist/MewgenicsRenamer*.exe
+
+    - name: Extract Release Notes from CHANGELOG
+      id: extract_notes
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: |
+        $TAG_NAME = "${{ github.ref_name }}"
+        $content = Get-Content CHANGELOG.md -Raw
+        
+        # 使用正则截断两级 Heading，精准提取对应 tag 的内容
+        if ($content -match "(?s)## \[$TAG_NAME\]\s*(.*?)(?=\n## \[[vV]\d|\Z)") {
+            $notes = $matches[1].Trim()
+        } else {
+            $notes = "Version $TAG_NAME deployed automatically."
+        }
+        
+        # 写入临时文件供 release 读取
+        $notes | Out-File -FilePath release_body.md -Encoding utf8
+
+    - name: Create Release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/MewgenicsRenamer*.exe
+        body_path: release_body.md
+        generate_release_notes: false
